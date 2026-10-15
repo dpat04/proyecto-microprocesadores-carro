@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Control del Carro</title>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<style>
+  :root { --bg:#111827; --card:#1f2937; --txt:#f3f4f6; --mut:#9ca3af; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,sans-serif; background:var(--bg); color:var(--txt); padding:16px; max-width:520px; margin:auto; }
+  h1 { font-size:20px; margin:0 0 12px; }
+  .card { background:var(--card); border-radius:12px; padding:14px; margin-bottom:14px; }
+  .estado { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+  .dot { width:12px; height:12px; border-radius:50%; background:#ef4444; }
+  .dot.on { background:#22c55e; }
+  .btns { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  button { padding:16px; font-size:18px; border:0; border-radius:10px; color:#fff; font-weight:600; }
+  #btnInicio { background:#16a34a; } #btnFin { background:#dc2626; }
+  label { display:flex; justify-content:space-between; align-items:center; margin:8px 0; }
+  select { font-size:16px; padding:8px; border-radius:8px; }
+  .conteos { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; text-align:center; }
+  .c { border-radius:10px; padding:12px 0; }
+  .c b { display:block; font-size:34px; }
+  .rojo { background:#b91c1c; } .verde { background:#15803d; } .azul { background:#1d4ed8; }
+  #error { display:none; background:#dc2626; padding:10px; border-radius:8px; margin-bottom:14px; }
+  small { color:var(--mut); }
+</style>
+</head>
+<body>
+<h1>🚗 Control del Carro</h1>
+<div id="error"></div>
+
+<div class="card">
+  <div class="estado"><span class="dot" id="dot"></span><span id="txtEstado">Detenido</span></div>
+  <div class="btns">
+    <button id="btnInicio">Inicio</button>
+    <button id="btnFin">Fin</button>
+  </div>
+</div>
+
+<div class="card">
+  <b>Configuración</b> <small>(solo con el carro detenido)</small>
+  <label>Rojo <select id="rojo"></select></label>
+  <label>Verde <select id="verde"></select></label>
+  <label>Azul <select id="azul"></select></label>
+  <label>Bifurcación <select id="direccion">
+    <option value="izquierda">Izquierda</option>
+    <option value="derecha">Derecha</option>
+  </select></label>
+</div>
+
+<div class="card">
+  <b>Segmentos detectados</b>
+  <div class="conteos" style="margin-top:10px">
+    <div class="c rojo">Rojo<b id="n-rojo">0</b></div>
+    <div class="c verde">Verde<b id="n-verde">0</b></div>
+    <div class="c azul">Azul<b id="n-azul">0</b></div>
+  </div>
+</div>
+
+<script>
+const socket = io();
+const ACC = {frenar:"Frenar (10 s)", retroceder:"Retroceder (3 s)", velocidad:"Cambiar velocidad"};
+const colores = ["rojo","verde","azul"];
+colores.forEach(c => {
+  const s = document.getElementById(c);
+  for (const k in ACC) s.add(new Option(ACC[k], k));
+});
+
+function enviarConfig() {
+  const d = {direccion: document.getElementById("direccion").value};
+  colores.forEach(c => d[c] = document.getElementById(c).value);
+  socket.emit("configurar", d);
+}
+[...colores, "direccion"].forEach(id =>
+  document.getElementById(id).addEventListener("change", enviarConfig));
+
+document.getElementById("btnInicio").onclick = () => socket.emit("inicio");
+document.getElementById("btnFin").onclick = () => socket.emit("fin");
+
+socket.on("estado", e => {
+  document.getElementById("dot").classList.toggle("on", e.moviendo);
+  document.getElementById("txtEstado").textContent = e.moviendo ? "En movimiento" : "Detenido";
+  colores.forEach(c => document.getElementById(c).value = e.config[c]);
+  document.getElementById("direccion").value = e.direccion;
+  actualizarConteo(e.conteo);
+});
+socket.on("conteo", actualizarConteo);
+
+function actualizarConteo(n) {
+  colores.forEach(c => document.getElementById("n-" + c).textContent = n[c]);
+}
+
+let t;
+socket.on("error_msg", m => {
+  const el = document.getElementById("error");
+  el.textContent = "⚠️ " + m; el.style.display = "block";
+  clearTimeout(t); t = setTimeout(() => el.style.display = "none", 4000);
+});
+</script>
+</body>
+</html>
