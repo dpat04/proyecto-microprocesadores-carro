@@ -1,70 +1,81 @@
+#include <Arduino.h>
 #include <Wire.h>
 #include <SparkFun_APDS9960.h>
 
-// Instancia del sensor
-SparkFun_APDS9960 apds = SparkFun_APDS9960();
+// Objeto que representa al sensor APDS-9960
+SparkFun_APDS9960 apds;
 
-// Pines I2C para el ESP32-C6 SuperMini (ajusta si usaste otros)
-const int I2C_SDA = 6;
-const int I2C_SCL = 7;
+// Pines I2C que realmente usamos en nuestro ESP32-S3
+const int I2C_SDA = 8;
+const int I2C_SCL = 9;
 
-// Variables para almacenar las lecturas
+// Variables donde guardaremos las lecturas
 uint16_t red = 0;
 uint16_t green = 0;
 uint16_t blue = 0;
 uint16_t ambient = 0;
 
 void setup() {
+
+  // Comunicación con la computadora
   Serial.begin(115200);
   delay(1500);
-  Serial.println("\n========================================");
-  Serial.println("   MODO CALIBRACION - APDS-9960 & ESP32  ");
+
+  Serial.println();
+  Serial.println("========================================");
+  Serial.println("     CALIBRACION SENSOR APDS-9960");
   Serial.println("========================================");
 
-  // Inicializar I2C con los pines definidos
-  Wire.begin(I2C_SDA, I2C_SCL); 
-  
-  // Inicializar el sensor
+  // Iniciar I2C usando los GPIO reales del carro
+  Wire.begin(I2C_SDA, I2C_SCL);
+
+  // Intentar detectar e inicializar el APDS-9960
   if (apds.init()) {
-    Serial.println("-> Sensor APDS-9960 inicializado correctamente.");
+    Serial.println("Sensor APDS-9960 detectado correctamente.");
   } else {
-    Serial.println("-> ¡Error al inicializar el sensor!");
+    Serial.println("ERROR: No se pudo detectar el APDS-9960.");
+    while (1) {
+      delay(1000);
+    }
   }
 
-  // Activar el sensor de luz
+  // Activar lectura de luz/color
   if (apds.enableLightSensor(false)) {
-    Serial.println("-> Sensor de luz activo. ¡Listo para medir!\n");
+    Serial.println("Sensor RGB activado.");
   } else {
-    Serial.println("-> ¡Error al activar el sensor de luz!");
+    Serial.println("ERROR: No se pudo activar el sensor RGB.");
   }
-  
+
   delay(500);
 }
 
 void loop() {
-  // Leer los valores de los canales de color y luz ambiental
-  if (!apds.readRedLight(red) ||
-      !apds.readGreenLight(green) ||
-      !apds.readBlueLight(blue) ||
-      !apds.readAmbientLight(ambient)) {
-    Serial.println("Error al leer los valores de luz.");
+
+  // Leer los cuatro canales del sensor
+  bool lecturaCorrecta =
+      apds.readRedLight(red) &&
+      apds.readGreenLight(green) &&
+      apds.readBlueLight(blue) &&
+      apds.readAmbientLight(ambient);
+
+  if (!lecturaCorrecta) {
+
+    Serial.println("Error leyendo el sensor.");
+
   } else {
-    // Imprimir formato limpio y ordenado para ver las escalas fácilmente
-    Serial.print("Ambiente (C): ");
+
+    Serial.print("C=");
     Serial.print(ambient);
-    Serial.print("\t|\t");
-    
-    Serial.print("Rojo (R): ");
+
+    Serial.print("   R=");
     Serial.print(red);
-    Serial.print("\t|\t");
-    
-    Serial.print("Verde (G): ");
+
+    Serial.print("   G=");
     Serial.print(green);
-    Serial.print("\t|\t");
-    
-    Serial.print("Azul (B): ");
+
+    Serial.print("   B=");
     Serial.println(blue);
   }
-  
-  delay(400); // Pausa de 400ms entre lecturas para que el monitor serie sea fácil de leer
+
+  delay(400);
 }
