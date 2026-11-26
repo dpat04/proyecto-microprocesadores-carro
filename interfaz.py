@@ -11,7 +11,7 @@ BUS_I2C = 1
 DIR_ESP = 0x42
 PERIODO_MS = 100          # lectura del estado cada 100 ms (tiempo real)
 
-CMD_INICIO, CMD_FIN, CMD_CONFIG, CMD_RUTA, CMD_VEL, CMD_MOVER = 1, 2, 3, 4, 5, 6
+CMD_INICIO, CMD_FIN, CMD_CONFIG, CMD_RUTA, CMD_VEL, CMD_MOVER, CMD_AJUSTE = 1, 2, 3, 4, 5, 6, 7
 DIR_ADELANTE, DIR_ATRAS, DIR_IZQ, DIR_DER, DIR_GIRO_IZQ, DIR_GIRO_DER = 0, 1, 2, 3, 4, 5
 NOMBRES_DIR = ["Adelante", "Atrás", "Curva izquierda", "Curva derecha",
                "Giro en su lugar (izq.)", "Giro en su lugar (der.)"]
@@ -26,6 +26,8 @@ ERRORES = {
     4: "Choque detectado (switch CLP): carro detenido",
     5: "Se perdió la comunicación: carro detenido",
     6: "Presione INICIO antes de cambiar la dirección",
+    7: "No hay calibración del sensor de línea en el ESP32 (use prueba_sensores.ino, comando l)",
+    8: "Línea perdida: el carro se detuvo",
 }
 
 
@@ -49,7 +51,9 @@ class EnlaceI2C:
         if chk != d[7]:
             return None
         return {"estado": d[0], "error": d[1], "r": d[2], "g": d[3], "b": d[4],
-                "vbat": d[5] / 10.0, "vel_alta": d[6]}
+                "vbat": d[5] / 10.0,
+                "vel_alta": (d[6] >> 7) & 1, "manual": (d[6] >> 6) & 1,
+                "bifurcacion": (d[6] >> 5) & 1, "patron": d[6] & 0x1F}
 
 
 class Interfaz:
@@ -59,12 +63,17 @@ class Interfaz:
         self.estado = None                   # None = sin datos del ESP32
 
         root.title("Carro seguidor - Grupo 6")
-        root.geometry("560x760")
         root.protocol("WM_DELETE_WINDOW", self.cerrar)
         fuente = ("Helvetica", 12)
 
+        # Dos columnas para que la ventana quepa en pantalla
+        col_izq = tk.Frame(root)
+        col_izq.pack(side="left", fill="both", expand=True, anchor="n")
+        col_der = tk.Frame(root)
+        col_der.pack(side="left", fill="both", expand=True, anchor="n")
+
         # --- Inicio / Fin ---
-        marco = ttk.LabelFrame(root, text="Control")
+        marco = ttk.LabelFrame(col_izq, text="Control (INICIO = seguir la línea)")
         marco.pack(fill="x", padx=10, pady=6)
         tk.Button(marco, text="INICIO", bg="#2e7d32", fg="white", width=14, height=2,
                   font=("Helvetica", 14, "bold"), command=self.inicio).pack(side="left", padx=10, pady=8)
@@ -72,7 +81,7 @@ class Interfaz:
                   font=("Helvetica", 14, "bold"), command=self.fin).pack(side="left", padx=10, pady=8)
 
         # --- Dirección (modo manual para pruebas) ---
-        marco = ttk.LabelFrame(root, text="Dirección manual (flechas del teclado o botones)")
+        marco = ttk.LabelFrame(col_izq, text="Dirección manual (flechas del teclado o botones)")
         marco.pack(fill="x", padx=10, pady=6)
         pad = tk.Frame(marco)
         pad.pack(pady=6)
@@ -98,7 +107,7 @@ class Interfaz:
         root.bind("<Return>", lambda e: self.inicio())
 
         # --- Velocidad y ruta ---
-        marco = ttk.LabelFrame(root, text="Velocidad y ruta en la bifurcación")
+        marco = ttk.LabelFrame(col_izq, text="Velocidad y ruta en la bifurcación")
         marco.pack(fill="x", padx=10, pady=6)
         self.vel = tk.IntVar(value=0)
         ttk.Label(marco, text="Velocidad:", font=fuente).grid(row=0, column=0, sticky="w", padx=6, pady=4)
@@ -110,7 +119,7 @@ class Interfaz:
         ttk.Radiobutton(marco, text="Derecha", variable=self.ruta, value=1, command=self.cambiar_ruta).grid(row=1, column=2)
 
         # --- Asociación color - acción ---
-        marco = ttk.LabelFrame(root, text="Asociación color → acción (solo con el carro detenido)")
+        marco = ttk.LabelFrame(col_der, text="Asociación color → acción (solo con el carro detenido)")
         marco.pack(fill="x", padx=10, pady=6)
         self.combos = []
         for i, color in enumerate(["Rojo", "Verde", "Azul"]):
@@ -122,8 +131,22 @@ class Interfaz:
         ttk.Button(marco, text="Aplicar configuración", command=self.aplicar_config).grid(
             row=3, column=0, columnspan=2, pady=6)
 
+        # --- Ajuste del control PD ---
+        marco = ttk.LabelFrame(col_der, text="Ajuste del seguimiento de línea (control PD)")
+        marco.pack(fill="x", padx=10, pady=6)
+        self.kp = tk.IntVar(value=15)
+        self.kd = tk.IntVar(value=20)
+        self.vb = tk.IntVar(value=45)
+        for i, (txt, var, lo, hi) in enumerate([("Kp", self.kp, 0, 100), ("Kd", self.kd, 0, 200),
+                                                 ("Velocidad baja %", self.vb, 15, 60)]):
+            ttk.Label(marco, text=txt, font=fuente).grid(row=i, column=0, sticky="w", padx=6, pady=2)
+            ttk.Spinbox(marco, from_=lo, to=hi, textvariable=var, width=6).grid(row=i, column=1, padx=6, pady=2)
+        ttk.Label(marco, text="(la velocidad alta es el doble)").grid(row=2, column=2, sticky="w")
+        ttk.Button(marco, text="Enviar ajustes", command=self.enviar_ajustes).grid(
+            row=3, column=0, columnspan=3, pady=6)
+
         # --- Estado en tiempo real ---
-        marco = ttk.LabelFrame(root, text="Estado en tiempo real")
+        marco = ttk.LabelFrame(col_der, text="Estado en tiempo real")
         marco.pack(fill="x", padx=10, pady=6)
         self.lbl_con = ttk.Label(marco, text="Conexión: ---", font=fuente)
         self.lbl_con.grid(row=0, column=0, sticky="w", padx=6, pady=2)
@@ -133,7 +156,9 @@ class Interfaz:
         self.lbl_bat.grid(row=2, column=0, sticky="w", padx=6, pady=2)
         self.lbl_cnt = ttk.Label(marco, text="Rojo: 0   Verde: 0   Azul: 0", font=("Helvetica", 13, "bold"))
         self.lbl_cnt.grid(row=3, column=0, sticky="w", padx=6, pady=6)
-        self.lbl_err = tk.Label(root, text="", fg="#c62828", font=fuente, wraplength=520)
+        self.lbl_sen = tk.Label(marco, text="Sensores: -----", font=("Courier", 14, "bold"))
+        self.lbl_sen.grid(row=4, column=0, sticky="w", padx=6, pady=2)
+        self.lbl_err = tk.Label(col_der, text="", fg="#c62828", font=fuente, wraplength=460)
         self.lbl_err.pack(pady=4)
 
         self.sondear()
@@ -149,7 +174,7 @@ class Interfaz:
 
     def inicio(self):
         if self._enviar(CMD_INICIO):
-            self.lbl_dir.config(text=f"Dirección: {NOMBRES_DIR[DIR_ADELANTE]}")
+            self.lbl_dir.config(text="Dirección: automática (seguimiento de línea)")
 
     def mover(self, direccion):
         if self.estado in (None, 0):
@@ -157,6 +182,17 @@ class Interfaz:
             return
         if self._enviar(CMD_MOVER, direccion):
             self.lbl_dir.config(text=f"Dirección: {NOMBRES_DIR[direccion]}")
+
+    def enviar_ajustes(self):
+        try:
+            kp, kd, vb = self.kp.get(), self.kd.get(), self.vb.get()
+        except tk.TclError:
+            messagebox.showerror("Error", "Los ajustes deben ser números enteros.")
+            return
+        if not (0 <= kp <= 255 and 0 <= kd <= 255 and 15 <= vb <= 60):
+            messagebox.showerror("Error", "Rangos: Kp 0-255, Kd 0-255, velocidad baja 15-60 %.")
+            return
+        self._enviar(CMD_AJUSTE, kp, kd, vb)
 
     def fin(self):
         self._enviar(CMD_FIN)
@@ -191,8 +227,12 @@ class Interfaz:
             else:
                 self.estado = d["estado"]
                 self.lbl_con.config(text="Conexión: OK", foreground="#2e7d32")
+                modo = "manual" if d["manual"] else "seguimiento"
                 self.lbl_est.config(text=f"Estado: {ESTADOS.get(d['estado'], '?')}"
-                                         f"   ({'alta' if d['vel_alta'] else 'baja'} velocidad)")
+                                         f"   ({'alta' if d['vel_alta'] else 'baja'} velocidad, modo {modo})")
+                barra = "".join("■" if (d["patron"] >> k) & 1 else "·" for k in range(5))
+                extra = "   BIFURCACIÓN" if d["bifurcacion"] else ""
+                self.lbl_sen.config(text=f"Sensores: izq [{barra}] der{extra}")
                 color_bat = "#c62828" if d["vbat"] < 9.6 else "black"
                 self.lbl_bat.config(text=f"Batería: {d['vbat']:.1f} V", foreground=color_bat)
                 self.lbl_cnt.config(text=f"Rojo: {d['r']}   Verde: {d['g']}   Azul: {d['b']}")
